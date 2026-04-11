@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState, useRef, use, useCallback } from "react";
+import { useEffect, useState, useRef, use } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import { useTTS } from "@/lib/use-tts";
+import { Markdown } from "@/components/Markdown";
+import Link from "next/link";
 
 type Topic = {
   id: string;
@@ -31,7 +34,7 @@ type ScoreResult = {
   topic: Topic;
 };
 
-// ─── Sound Effects (Web Audio API, no files needed) ─────────
+// ─── Sound ──────────────────────────────────────────────────
 
 function playSound(type: "correct" | "wrong" | "teach" | "combo" | "finish") {
   try {
@@ -40,18 +43,15 @@ function playSound(type: "correct" | "wrong" | "teach" | "combo" | "finish") {
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
-
     switch (type) {
       case "correct":
-        // Rising cheerful tone
         osc.type = "sine";
-        osc.frequency.setValueAtTime(523, ctx.currentTime); // C5
-        osc.frequency.setValueAtTime(659, ctx.currentTime + 0.08); // E5
-        osc.frequency.setValueAtTime(784, ctx.currentTime + 0.16); // G5
+        osc.frequency.setValueAtTime(523, ctx.currentTime);
+        osc.frequency.setValueAtTime(659, ctx.currentTime + 0.08);
+        osc.frequency.setValueAtTime(784, ctx.currentTime + 0.16);
         gain.gain.setValueAtTime(0.15, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.35);
+        osc.start(); osc.stop(ctx.currentTime + 0.35);
         break;
       case "combo":
         osc.type = "sine";
@@ -61,8 +61,7 @@ function playSound(type: "correct" | "wrong" | "teach" | "combo" | "finish") {
         osc.frequency.setValueAtTime(1047, ctx.currentTime + 0.18);
         gain.gain.setValueAtTime(0.18, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.45);
+        osc.start(); osc.stop(ctx.currentTime + 0.45);
         break;
       case "wrong":
         osc.type = "triangle";
@@ -70,8 +69,7 @@ function playSound(type: "correct" | "wrong" | "teach" | "combo" | "finish") {
         osc.frequency.setValueAtTime(180, ctx.currentTime + 0.15);
         gain.gain.setValueAtTime(0.12, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.3);
+        osc.start(); osc.stop(ctx.currentTime + 0.3);
         break;
       case "teach":
         osc.type = "sine";
@@ -79,8 +77,7 @@ function playSound(type: "correct" | "wrong" | "teach" | "combo" | "finish") {
         osc.frequency.setValueAtTime(494, ctx.currentTime + 0.1);
         gain.gain.setValueAtTime(0.08, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.25);
+        osc.start(); osc.stop(ctx.currentTime + 0.25);
         break;
       case "finish":
         osc.type = "sine";
@@ -90,106 +87,13 @@ function playSound(type: "correct" | "wrong" | "teach" | "combo" | "finish") {
         osc.frequency.setValueAtTime(1047, ctx.currentTime + 0.36);
         gain.gain.setValueAtTime(0.2, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.7);
+        osc.start(); osc.stop(ctx.currentTime + 0.7);
         break;
     }
-  } catch {
-    // AudioContext may fail in some environments, ignore
-  }
+  } catch { /* ignore */ }
 }
 
-// ─── Emoji Burst Component ──────────────────────────────────
-
-function EmojiBurst({ emoji, id }: { emoji: string; id: number }) {
-  const [style] = useState(() => ({
-    left: `${30 + Math.random() * 40}%`,
-    animationDelay: `${Math.random() * 0.3}s`,
-    fontSize: `${1.5 + Math.random() * 1.5}rem`,
-  }));
-
-  return (
-    <span
-      key={id}
-      className="emoji-burst"
-      style={style}
-    >
-      {emoji}
-    </span>
-  );
-}
-
-// ─── Feedback Banner ────────────────────────────────────────
-
-const FEEDBACK_CONFIG = {
-  correct: {
-    emoji: "🎉",
-    bg: "bg-green-500/10 border-green-500/30",
-    text: "text-green-700",
-  },
-  wrong: {
-    emoji: "✗",
-    bg: "bg-orange-500/10 border-orange-500/30",
-    text: "text-orange-700",
-  },
-  teach: {
-    emoji: "💡",
-    bg: "bg-blue-500/10 border-blue-500/30",
-    text: "text-blue-700",
-  },
-};
-
-function FeedbackBanner({
-  feedback,
-  streak,
-}: {
-  feedback: "correct" | "wrong" | "teach";
-  streak: number;
-}) {
-  const config = FEEDBACK_CONFIG[feedback];
-  const labels = {
-    correct: streak >= 3 ? `${streak} Combo! 🔥` : "Correct!",
-    wrong: "Not quite...",
-    teach: "Let me explain",
-  };
-
-  return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium ${config.bg} ${config.text} feedback-pop`}>
-      <span>{config.emoji}</span>
-      <span>{labels[feedback]}</span>
-    </div>
-  );
-}
-
-// ─── Score Ring ─────────────────────────────────────────────
-
-function ScoreRing({ score }: { score: number }) {
-  const radius = 45;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (score / 100) * circumference;
-  const color = score >= 80 ? "#22c55e" : score >= 60 ? "#3b82f6" : score >= 40 ? "#eab308" : "#ef4444";
-
-  return (
-    <div className="relative w-28 h-28 score-ring-enter">
-      <svg className="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r={radius} fill="none" stroke="currentColor" strokeWidth="6" className="text-muted/30" />
-        <circle
-          cx="50" cy="50" r={radius} fill="none" stroke={color} strokeWidth="6"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          className="transition-all duration-1000 ease-out"
-          style={{ strokeDashoffset: offset }}
-        />
-      </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-3xl font-bold">{score}</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Page ──────────────────────────────────────────────
+// ─── Main ───────────────────────────────────────────────────
 
 export default function StudyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: topicId } = use(params);
@@ -203,10 +107,9 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
   const [result, setResult] = useState<ScoreResult | null>(null);
   const [showContent, setShowContent] = useState(false);
   const [streak, setStreak] = useState(0);
-  const [emojis, setEmojis] = useState<Array<{ id: number; emoji: string }>>([]);
   const [latestFeedback, setLatestFeedback] = useState<"correct" | "wrong" | "teach" | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const emojiId = useRef(0);
+  const tts = useTTS();
 
   useEffect(() => {
     async function load() {
@@ -227,16 +130,6 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
     load();
   }, [topicId]);
 
-  const spawnEmojis = useCallback((type: "correct" | "wrong" | "teach") => {
-    if (type !== "correct") return;
-    const newEmojis = Array.from({ length: 3 }, () => ({
-      id: emojiId.current++,
-      emoji: "🎉",
-    }));
-    setEmojis(newEmojis);
-    setTimeout(() => setEmojis([]), 1500);
-  }, []);
-
   async function startSession() {
     setSending(true);
     const res = await fetch("/api/study", {
@@ -248,6 +141,7 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
     if (data.sessionId) {
       setSessionId(data.sessionId);
       setMessages(data.messages);
+      tts.speak(data.messages[0]?.content || "");
     }
     setSending(false);
   }
@@ -269,24 +163,19 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
     const data = await res.json();
     if (data.messages) {
       const feedback: "correct" | "wrong" | "teach" = data.feedback || "teach";
-      // Tag the last assistant message with feedback
       const msgs = data.messages.map((m: Message, i: number) =>
         i === data.messages.length - 1 && m.role === "assistant" ? { ...m, feedback } : m
       );
       setMessages(msgs);
-
-      // Update streak
-      const newStreak = feedback === "correct" ? streak + 1 : 0;
-      setStreak(newStreak);
       setLatestFeedback(feedback);
 
-      // Sound + emoji
-      if (feedback === "correct" && newStreak >= 3) {
-        playSound("combo");
-      } else {
-        playSound(feedback);
-      }
-      spawnEmojis(feedback);
+      const newStreak = feedback === "correct" ? streak + 1 : 0;
+      setStreak(newStreak);
+
+      if (feedback === "correct" && newStreak >= 3) playSound("combo");
+      else playSound(feedback);
+
+      tts.speak(data.message);
     }
     setSending(false);
   }
@@ -318,9 +207,7 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
   }
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
   if (loading) {
@@ -332,12 +219,7 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
   }
 
   return (
-    <div className="max-w-3xl space-y-4 relative">
-      {/* Emoji burst layer */}
-      <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
-        {emojis.map((e) => <EmojiBurst key={e.id} id={e.id} emoji={e.emoji} />)}
-      </div>
-
+    <div className="max-w-3xl space-y-4">
       {/* Topic header */}
       <div className="flex items-center justify-between">
         <div>
@@ -346,17 +228,26 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
             {topic.category && <Badge variant="outline">{topic.category}</Badge>}
             <Badge variant="secondary">Mastery: {topic.mastery}%</Badge>
             {streak >= 2 && (
-              <Badge className="bg-orange-500 text-white streak-pulse">
-                {streak} Streak 🔥
-              </Badge>
+              <Badge className="bg-orange-500 text-white animate-pulse">{streak} Streak</Badge>
             )}
           </div>
         </div>
-        {topic.content && (
-          <Button variant="ghost" size="sm" onClick={() => setShowContent(!showContent)}>
-            {showContent ? "Hide Reference" : "Show Reference"}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <button onClick={tts.cycle} title={tts.title}
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm border transition-all ${
+              tts.enabled ? "bg-primary/10 text-primary border-primary/30" : "bg-muted text-muted-foreground border-border"
+            }`}>
+            {tts.label}
+          </button>
+          {topic.content && (
+            <Button variant="ghost" size="sm" onClick={() => setShowContent(!showContent)}>
+              {showContent ? "Hide Reference" : "Show Reference"}
+            </Button>
+          )}
+          <Link href={`/study/${topicId}/immersive`}>
+            <Button variant="outline" size="sm">Immersive</Button>
+          </Link>
+        </div>
       </div>
 
       {/* Reference content */}
@@ -366,7 +257,7 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
             <CardTitle className="text-sm">Reference Material</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-sm whitespace-pre-wrap text-muted-foreground">{topic.content}</div>
+            <Markdown className="text-muted-foreground">{topic.content || ""}</Markdown>
           </CardContent>
         </Card>
       )}
@@ -382,11 +273,6 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
               <ScoreRing score={result.score} />
               <div className="flex-1">
                 <p className="text-sm text-muted-foreground">{result.summary}</p>
-                {streak >= 2 && (
-                  <p className="text-sm mt-2 font-medium text-orange-600">
-                    Best streak: {streak} 🔥
-                  </p>
-                )}
               </div>
             </div>
             {result.weakPoints.length > 0 && (
@@ -414,7 +300,15 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm">Feynman Learning Session</CardTitle>
               <div className="flex items-center gap-2">
-                {latestFeedback && <FeedbackBanner feedback={latestFeedback} streak={streak} />}
+                {latestFeedback && (
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full feedback-pop ${
+                    latestFeedback === "correct" ? "bg-green-500/10 text-green-600"
+                    : latestFeedback === "wrong" ? "bg-orange-500/10 text-orange-600"
+                    : "bg-blue-500/10 text-blue-600"
+                  }`}>
+                    {latestFeedback === "correct" ? "🎉 Correct" : latestFeedback === "wrong" ? "✗ Not quite" : "💡 Key point"}
+                  </span>
+                )}
                 {sessionId && messages.length > 0 && (
                   <span className="text-xs text-muted-foreground">
                     {Math.floor(messages.length / 2)} rounds
@@ -443,7 +337,7 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
                 {messages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} msg-enter`}>
                     <div
-                      className={`max-w-[85%] rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap ${
+                      className={`max-w-[85%] rounded-lg px-4 py-2.5 text-sm ${
                         msg.role === "user"
                           ? "bg-primary text-primary-foreground"
                           : msg.feedback === "correct"
@@ -453,7 +347,9 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
                           : "bg-muted"
                       }`}
                     >
-                      {msg.content}
+                      {msg.role === "assistant"
+                        ? <Markdown>{msg.content}</Markdown>
+                        : msg.content}
                     </div>
                   </div>
                 ))}
@@ -486,20 +382,11 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
                     <Button onClick={sendMessage} disabled={sending || !input.trim()} size="sm">
                       Send
                     </Button>
-                    <Button
-                      onClick={finishSession}
-                      disabled={finishing || messages.length < 3}
-                      variant="outline"
-                      size="sm"
-                    >
+                    <Button onClick={finishSession} disabled={finishing || messages.length < 3} variant="outline" size="sm">
                       {finishing ? "..." : "Finish"}
                     </Button>
-                    <Button
-                      onClick={() => { setSessionId(null); setMessages([]); setStreak(0); setLatestFeedback(null); }}
-                      variant="ghost"
-                      size="sm"
-                      className="text-xs"
-                    >
+                    <Button onClick={() => { setSessionId(null); setMessages([]); setStreak(0); setLatestFeedback(null); }}
+                      variant="ghost" size="sm" className="text-xs">
                       Reset
                     </Button>
                   </div>
@@ -509,6 +396,23 @@ export default function StudyPage({ params }: { params: Promise<{ id: string }> 
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function ScoreRing({ score }: { score: number }) {
+  const r = 45;
+  const c = 2 * Math.PI * r;
+  const color = score >= 80 ? "#22c55e" : score >= 60 ? "#3b82f6" : score >= 40 ? "#eab308" : "#ef4444";
+  return (
+    <div className="relative w-28 h-28 score-ring-enter">
+      <svg className="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r={r} fill="none" stroke="currentColor" strokeWidth="6" className="text-muted/30" />
+        <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c - (score / 100) * c}
+          className="transition-all duration-1000 ease-out" />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center text-3xl font-bold">{score}</div>
     </div>
   );
 }

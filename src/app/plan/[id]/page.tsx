@@ -99,6 +99,11 @@ export default function PlanDetailPage({ params }: { params: Promise<{ id: strin
             <p className="text-muted-foreground mt-1">{plan.description}</p>
           )}
         </div>
+        {plan.topics.length > 0 && (
+          <Link href={`/plan/${id}/flashcard`}>
+            <Button>Flashcard Mode</Button>
+          </Link>
+        )}
       </div>
 
       {/* Stats */}
